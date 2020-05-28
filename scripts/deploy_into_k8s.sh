@@ -5,6 +5,8 @@ AAG_SUBID=$(echo $AAG_ID | cut -d'/' -f 3)
 AKS_API=$(az aks show -n $CLUSTER_NAME -g $RG_NAME --query fqdn -o tsv)
 AAG_RGID=$(az group show -n $NET_RG_NAME --query id -o tsv)
 AKS_MC_RG="MC_${RG_NAME}_${CLUSTER_NAME}_${LOCATION}"
+SERVICE_PRINCIPAL=$(az aks show -n $CLUSTER_NAME -g $RG_NAME --query servicePrincipalProfile.clientId -o tsv)
+AKS_MC_RG_ID=$(az group show -n $AKS_MC_RG --query id -o tsv)
 
 ## Create MAnaged Identity into AKS MC Resource Group
 echo "creating MSI $MSI_NAME"
@@ -33,22 +35,7 @@ az role assignment create \
 ## Deploy the Managed Idenity Controller and Node Managed Identity
 echo ""
 echo "Deploying the Managed Idenity Controller and Node Managed Identity"
-kubectl apply -f https://raw.githubusercontent.com/Azure/aad-pod-identity/master/deploy/infra/deployment-rbac.yaml
-
-## Templating yaml files using ceeated microsoft managed identity 
-echo "updating file aadpodidentity.yaml"
-yq w -i ../k8s_yaml/aadpodidentity.yaml "metadata.name" $MSI_NAME
-yq w -i ../k8s_yaml/aadpodidentity.yaml "spec.ResourceID" $MSI_R_ID
-yq w -i ../k8s_yaml/aadpodidentity.yaml "spec.ClientID" $MSI_C_ID
-echo ""
-echo "updating file aadpodidentitybinding.yaml"
-yq w -i ../k8s_yaml/aadpodidentitybinding.yaml "spec.AzureIdentity" $MSI_C_ID
-
-## Install and bind the Azure Identity
-echo ""
-echo "Installing and binding the Azure Identity"
-kubectl apply -f ../k8s_yaml/aadpodidentity.yaml
-kubectl apply -f ../k8s_yaml/aadpodidentitybinding.yaml
+kubectl apply -f https://raw.githubusercontent.com/Azure/aad-pod-identity/v1.5.5/deploy/infra/deployment-rbac.yaml
 
 ## Add the AGIC Helm repository
 echo ""
@@ -59,7 +46,9 @@ helm repo update
 ## Deploy application gateway ingress controller
 echo ""
 echo "Deploying application gateway ingress controller"
+
 helm upgrade -i ingress-agic application-gateway-kubernetes-ingress/ingress-azure \
+     --version 1.2.0-rc1 \
      --namespace default \
      --debug \
      --set appgw.name=$AAG_NAME \
@@ -75,12 +64,3 @@ helm upgrade -i ingress-agic application-gateway-kubernetes-ingress/ingress-azur
      --set kubernetes.watchNamespace=default \
      --set aksClusterConfiguration.apiServerAddress=$AKS_API
 
-## Resetting yaml files removing microsoft managed identity info
-echo ""
-echo "updating file aadpodidentity.yaml"
-yq w -i ../k8s_yaml/aadpodidentity.yaml "metadata.name" ""
-yq w -i ../k8s_yaml/aadpodidentity.yaml "spec.ResourceID" ""
-yq w -i ../k8s_yaml/aadpodidentity.yaml "spec.ClientID" ""
-echo ""
-echo "updating file aadpodidentitybinding.yaml"
-yq w -i ../k8s_yaml/aadpodidentitybinding.yaml "spec.AzureIdentity" ""
